@@ -1,0 +1,207 @@
+---
+title: "inflexion stuff"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+editor_options:
+  chunk_output_type: inline
+---
+
+date: 6 October 2022
+
+```{r prep, message=FALSE, warning=FALSE, echo = FALSE}
+library(magrittr) # assignment pipe
+library(tidyverse) # default awesome functions
+library(lubridate) # time manipulations
+library(readxl) # alternative excel reader
+
+# for beautiful plots
+library(grid) # for grob
+library(ggpubr) # from gridded plots
+
+library(bookdown) # rmarkdown helpers
+library(knitr)
+
+library(glue) # alternative to paste
+
+library(mgcv)
+```
+
+```{r get all data, echo = FALSE, warning=FALSE}
+cases_national <- read_csv("https://raw.githubusercontent.com/ESR-NZ/covid_in_wastewater/main/data/cases_national.csv") %>%
+  janitor::clean_names()
+ww_national <- read_csv("https://raw.githubusercontent.com/ESR-NZ/covid_in_wastewater/main/data/ww_national.csv") %>% 
+  janitor::clean_names() %>% 
+  rename(copies_per_person_day = copies_per_day_per_person)
+National_weekly <- left_join(ww_national, cases_national, 
+                             by = "week_end_date")%>% 
+  filter(week_end_date > ymd(20220101)) %>% 
+  mutate(case_sum = case_7d_avg * 7)
+National_weekly <-data.frame(x = rownames(National_weekly),
+                             National_weekly,
+                             row.names=NULL) %>% 
+  arrange(week_end_date) %>% 
+  mutate(x = as.numeric(x), 
+         copies_last_week = lag(copies_per_person_day), 
+         cases_last_week = lag(case_sum))
+```
+
+## EDA
+```{r EDA, fig.width = 12, fig.height=12}
+National_weekly %>% 
+  # select(-x, -national_pop, -cases_per_100k, -week_epi) %>% 
+  GGally::ggpairs() +
+  theme_bw()
+```
+
+## BORING LM
+
+```{r lm BORING}
+model_wkcase_lm <- lm(data = National_weekly,
+                      log10(case_sum) ~ cases_last_week + log10(copies_per_person_day) + log10(copies_last_week) + x)
+
+par(mfrow = c(2,2))
+plot(model_wkcase_lm)
+summary(model_wkcase_lm)
+
+National_weekly[8,]
+
+National_weekly$y_hatcase_lm <- 10^predict(model_wkcase_lm, list(x = National_weekly$x, 
+                                                                 copies_per_person_day = National_weekly$copies_per_person_day, 
+                                                                 cases_last_week = National_weekly$cases_last_week, 
+                                                                 copies_last_week = National_weekly$copies_last_week))
+ggplot(data = National_weekly)+
+  geom_line(aes(x = week_end_date, y = case_sum))+
+  geom_line(aes(x = week_end_date, y = y_hatcase_lm), colour = "brown", size = 1.5)+
+  scale_y_log10(labels = scales::label_log())+
+  scale_x_date(labels = scales::label_date_short(),
+               date_breaks = "2 week",
+               name = "")+
+  # geom_vline(xintercept = National_weekly[10,"week_end_date"])+
+  theme_classic()
+```
+
+## POLYNOMIAL LM
+```{r lm polynomial}
+model_wkcase_lm1 <- lm(data = National_weekly,
+                       log10(case_sum) ~ cases_last_week + log10(copies_per_person_day) + log10(copies_last_week) + x +
+                         I(cases_last_week^2) + I(log10(copies_per_person_day)^2) + I(log10(copies_last_week)^2) + I(x^2))
+# par(mfrow = c(2,2))
+# plot(model_wkcase_lm1)
+summary(model_wkcase_lm1)
+
+
+model_wkcase_lm1 <- lm(data = National_weekly,
+                       log10(case_sum) ~ cases_last_week + copies_per_person_day + copies_last_week + x +
+                         I(cases_last_week^2) + I(log10(copies_per_person_day)^2) + I(log10(copies_last_week)^2) )
+summary(model_wkcase_lm1)
+
+National_weekly$y_hatcase_lm1 <- 10^predict(model_wkcase_lm1, list(x = National_weekly$x, 
+                                                                   copies_per_person_day = National_weekly$copies_per_person_day,
+                                                                   copies_last_week = National_weekly$copies_last_week,
+                                                                   cases_last_week = National_weekly$cases_last_week,
+                                                                   x = National_weekly$x))
+ggplot(data = National_weekly)+
+  geom_line(aes(x = week_end_date, y = case_sum))+
+  geom_line(aes(x = week_end_date, y = y_hatcase_lm), colour = "brown")+
+  geom_line(aes(x = week_end_date, y = y_hatcase_lm1), colour = "green", size = 1.5)+
+  scale_y_log10(labels = scales::label_log())+
+  scale_x_date(labels = scales::label_date_short(),
+               date_breaks = "2 week",
+               name = "")+
+  theme_classic()
+```
+
+
+## GAM
+
+```{r GAM}
+model_wkcase_gam <- gam(data = National_weekly,
+                        log10(case_sum) ~ s(cases_last_week) + s(log10(copies_per_person_day)) + s(log10(copies_last_week)) + s(x, k = 2))
+
+par(mfrow = c(2,2))
+plot(model_wkcase_gam)
+summary(model_wkcase_gam)
+
+National_weekly$y_hatcasegam <- 10^predict(model_wkcase_gam, list(x = National_weekly$x, 
+                                                                  copies_per_person_day = National_weekly$copies_per_person_day,
+                                                                  copies_last_week = National_weekly$copies_last_week,
+                                                                  cases_last_week = National_weekly$cases_last_week,
+                                                                  x = National_weekly$x))
+
+ggplot(data = National_weekly)+
+  geom_line(aes(x = week_end_date, y = y_hatcase_lm), colour = "brown")+
+  geom_line(aes(x = week_end_date, y = y_hatcase_lm1), colour = "green")+
+  geom_line(aes(x = week_end_date, y = y_hatcasegam), colour = "blue", size = 2)+
+  geom_line(aes(x = week_end_date, y = case_sum))+
+  scale_y_log10(labels = scales::label_log())+
+  scale_x_date(labels = scales::label_date_short(),
+               date_breaks = "2 week",
+               name = "")+
+  theme_classic()
+```
+
+
+## BORING LM revisit
+Not the best fit but the closet to the shape of the data - few extra wiggles
+
+```{r lm BORING reminder}
+ggplot(data = National_weekly)+
+  geom_line(aes(x = week_end_date, y = case_sum))+
+  geom_line(aes(x = week_end_date, y = y_hatcase_lm), colour = "brown", size = 1.5)+
+  scale_y_log10(labels = scales::label_log())+
+  scale_x_date(labels = scales::label_date_short(),
+               date_breaks = "2 week",
+               name = "")+
+  theme_classic()
+```
+
+### X weeks predicting the next week (or this week)
+
+for predicting the fututrre, we are not gfoing to have the present day WW results, and the lag of the WW to cases is not enought o usefully model case loads.
+An updated model might look like:  
+`r case_sum ~ cases_last_week + copies_last_week + end_of_week_date`
+
+
+
+```{r}
+National_weekly$mod_test <- NA
+train_length <- 5
+for(i in 1:(length(National_weekly$x) - train_length)){
+  
+  # get data for training and testing
+  data_train <- National_weekly %>%
+    filter(x >= i, x < i + train_length)
+  
+  data_test <- National_weekly %>%
+    filter(x == i+train_length)
+  
+  # train model for the following week
+  mod_train <- lm(case_sum ~ cases_last_week + copies_last_week + x, data = data_train)
+  
+  # get prediction for follwoing week
+  National_weekly$mod_test[i+train_length] <- predict(mod_train,
+                                                      list(x = data_test$x,
+                                                           copies_per_person_day = data_test$copies_per_person_day,
+                                                           cases_last_week = data_test$cases_last_week,
+                                                           copies_last_week = data_test$copies_last_week))
+}
+
+ggplot(data = National_weekly)+
+  geom_line(aes(x = week_end_date, y = case_sum))+
+  geom_line(aes(x = week_end_date, y = y_hatcase_lm), colour = "brown")+
+  geom_line(aes(x = week_end_date, y = mod_test), colour = "orange", size = 1.5)+
+  scale_y_log10(labels = scales::label_log())+
+  scale_x_date(labels = scales::label_date_short(),
+               date_breaks = "2 week",
+               name = "")+
+  theme_classic()
+
+National_weekly$y_hatcase_lm - National_weekly$mod_test
+National_weekly$case_sum - National_weekly$mod_test
+
+mean((National_weekly$case_sum - National_weekly$mod_test)^2, na.rm = T)^0.5
+```
+
+
