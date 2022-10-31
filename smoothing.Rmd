@@ -1,0 +1,163 @@
+---
+title: "Smoothing"
+author: "Bridget Armstrong"
+date: "26/10/2022"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r prep, message=FALSE, warning=FALSE, echo = FALSE}
+library(magrittr) # assignment pipe
+library(tidyverse) # default awesome functions
+library(lubridate) # time manipulations
+
+library(bookdown) # rmarkdown helpers
+library(knitr)
+```
+
+```{r get and wrangle data, echo = FALSE, warning=FALSE}
+# get data from github----
+
+cases_national <- read_csv("https://raw.githubusercontent.com/ESR-NZ/covid_in_wastewater/main/data/cases_national.csv") %>%
+  janitor::clean_names()
+
+ww_national <- read_csv("https://raw.githubusercontent.com/ESR-NZ/covid_in_wastewater/main/data/ww_national.csv") %>% 
+  janitor::clean_names() %>% 
+  rename(copies_per_person_day = copies_per_day_per_person)
+
+National_weekly <- left_join(ww_national, cases_national, 
+                             by = "week_end_date")%>% 
+  filter(week_end_date > ymd(20220101)) %>% 
+  mutate(case_sum = case_7d_avg * 7)
+
+National_weekly <-data.frame(x = rownames(National_weekly),
+                             National_weekly,
+                             row.names=NULL) %>% 
+  arrange(week_end_date) %>% 
+  mutate(x = as.numeric(x), 
+         copies_last_week = lag(copies_per_person_day), 
+         cases_last_week = lag(case_sum))
+```
+
+
+```{r cases over time with different smoothing}
+national_cases_smooth_wide <- National_weekly %>% 
+  select(x, week_end_date, cases_1wk = case_sum) %>% 
+  # create smoothing with exponential moving averages.
+  mutate(cases_2wk = pracma::movavg(cases_1wk, n = 2, type = "e"), 
+         cases_3wk = pracma::movavg(cases_1wk, n = 3, type = "e"), 
+         cases_4wk = pracma::movavg(cases_1wk, n = 4, type = "e"), 
+         cases_5wk = pracma::movavg(cases_1wk, n = 5, type = "e"))
+national_cases_smooth <- national_cases_smooth_wide%>% 
+  pivot_longer(cols = starts_with("cases"), 
+               values_to = "cases", 
+               names_to = "count_type_cases") 
+
+national_cases_smooth %>% 
+  ggplot()+
+  geom_line(aes(x = week_end_date, y = cases, colour = count_type_cases ))+
+  scale_x_date(labels = scales::label_date_short(),
+               date_breaks = "2 week",
+               name = "")+
+  scale_y_log10(labels = scales::label_log())+
+  theme_classic()
+```
+
+```{r ww over time with different smoothing}
+national_ww_smooth_wide <-  National_weekly %>% 
+  select(x, week_end_date, ww_1wk = copies_per_person_day) %>% 
+    # create smoothing with exponential moving averages.
+  mutate(ww_2wk = pracma::movavg(ww_1wk, n = 2, type = "e"), 
+         ww_3wk = pracma::movavg(ww_1wk, n = 3, type = "e"), 
+         ww_4wk = pracma::movavg(ww_1wk, n = 4, type = "e"), 
+         ww_5wk = pracma::movavg(ww_1wk, n = 5, type = "e")) 
+
+national_ww_smooth <- national_ww_smooth_wide%>% 
+  pivot_longer(cols = starts_with("ww"), 
+               values_to = "ww", 
+               names_to = "count_type_ww") 
+
+national_ww_smooth %>% 
+  ggplot()+
+  geom_line(aes(x = week_end_date, y = ww, colour = count_type_ww ))+
+  scale_y_log10(labels = scales::label_log())+
+  scale_x_date(labels = scales::label_date_short(),
+               date_breaks = "2 week",
+               name = "")+
+  theme_classic()
+```
+
+```{r ww with cases}
+plot_coef <- max(national_cases_smooth$cases, na.rm = T)/max(national_ww_smooth$ww, na.rm = T)
+
+national_weekly_long <- left_join(national_ww_smooth, national_cases_smooth, 
+                                  by = c("week_end_date", "x")) %>% 
+  mutate(cases_plot = cases/plot_coef)
+
+national_weekly_long %>% 
+  ggplot()+
+  geom_line(aes(x = week_end_date, y = cases_plot, colour = count_type_cases))+
+  geom_line(aes(x = week_end_date, y = ww, colour = count_type_ww), linetype = "dashed")+
+  scale_y_log10(labels = scales::label_log(), 
+                sec.axis = sec_axis(trans = ~. * plot_coef,
+                                    labels = scales::label_number_si(),
+                                    name = "Cases per week"))+
+  scale_x_date(labels = scales::label_date_short(),
+               date_breaks = "2 week",
+               name = "")+
+  theme_classic()
+```
+```{r cases_1wk with ww_2wk ww_3wk}
+library(ggpmisc)
+
+national_cases_smooth_wide %>% 
+  select(week_end_date, cases_1wk) %>% 
+  left_join(., national_ww_smooth_wide %>% 
+              select(week_end_date, ww_3wk), 
+            by = "week_end_date") %>% 
+  ggplot(aes(y = cases_1wk, x = ww_3wk))+
+  geom_point()+
+  stat_poly_eq(aes(label = paste(after_stat(eq.label),
+                                 after_stat(rr.label), sep = "*\", \"*"))) +
+  theme_classic()+
+  scale_y_log10(labels = scales::label_log())+
+  scale_x_log10(labels = scales::label_log())
+
+national_cases_smooth_wide %>% 
+  select(week_end_date, cases_1wk) %>% 
+  left_join(., national_ww_smooth_wide %>% 
+              select(week_end_date, ww_2wk), 
+            by = "week_end_date") %>% 
+  ggplot(aes(y = cases_1wk, x = ww_2wk))+
+  geom_point()+
+  stat_poly_eq(aes(label = paste(after_stat(eq.label),
+                                 after_stat(rr.label), sep = "*\", \"*"))) +
+  theme_classic()+
+  scale_y_log10(labels = scales::label_log())+
+  scale_x_log10(labels = scales::label_log())
+
+plot_coef <- max(national_cases_smooth_wide$cases_1wk, na.rm = T)/max(national_ww_smooth_wide$ww_2wk, na.rm = T)
+
+national_cases_smooth_wide %>% 
+  select(week_end_date, cases_1wk) %>% 
+  left_join(., national_ww_smooth_wide %>% 
+              select(week_end_date, ww_3wk, ww_2wk), 
+            by = "week_end_date") %>% 
+  mutate(cases_plot = cases_1wk/plot_coef) %>% 
+  ggplot()+
+  geom_line(aes(x = week_end_date, y = cases_plot))+
+  geom_line(aes(x = week_end_date, y = ww_2wk), linetype = "dashed")+
+  geom_line(aes(x = week_end_date, y = ww_3wk), linetype = "dotted")+
+  scale_y_log10(labels = scales::label_log(), 
+                sec.axis = sec_axis(trans = ~. * plot_coef,
+                                    labels = scales::label_number_si(),
+                                    name = "Cases per week"))+
+  scale_x_date(labels = scales::label_date_short(),
+               date_breaks = "2 week",
+               name = "")+
+  theme_classic()
+```
