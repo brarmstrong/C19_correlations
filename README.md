@@ -12,7 +12,8 @@ case_hop_mort.R show how different case counts correlate  </br>
 smoothing.R offers different smoothing options for C19 case and SARS-CoV-2 detection in WW </br>
    Data from https://github.com/ESR-NZ/covid_in_wastewater</br>
    
-### WIP:
-   
-inflexion.R shows some exampled of how many time-points are required for differnt types of estimations of inflexion points.</br>
+
+inflexion.R shows some examples of how many time-points are required for different types of estimations of inflexion points.</br>
+   Primarily linear model, GAM requires many more degrees of freedom to work
    Data from https://github.com/ESR-NZ/covid_in_wastewater</br>
+   
