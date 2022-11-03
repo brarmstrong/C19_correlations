@@ -114,33 +114,7 @@ ggplot(data = National_weekly)+
 ```
 
 
-## GAM
 
-```{r GAM}
-model_wkcase_gam <- gam(data = National_weekly,
-                        log10(case_sum) ~ s(cases_last_week) + s(log10(copies_per_person_day)) + s(log10(copies_last_week)) + s(x, k = 2))
-
-par(mfrow = c(2,2))
-plot(model_wkcase_gam)
-summary(model_wkcase_gam)
-
-National_weekly$y_hatcasegam <- 10^predict(model_wkcase_gam, list(x = National_weekly$x, 
-                                                                  copies_per_person_day = National_weekly$copies_per_person_day,
-                                                                  copies_last_week = National_weekly$copies_last_week,
-                                                                  cases_last_week = National_weekly$cases_last_week,
-                                                                  x = National_weekly$x))
-
-ggplot(data = National_weekly)+
-  geom_line(aes(x = week_end_date, y = y_hatcase_lm), colour = "brown")+
-  geom_line(aes(x = week_end_date, y = y_hatcase_lm1), colour = "green")+
-  geom_line(aes(x = week_end_date, y = y_hatcasegam), colour = "blue", size = 2)+
-  geom_line(aes(x = week_end_date, y = case_sum))+
-  scale_y_log10(labels = scales::label_log())+
-  scale_x_date(labels = scales::label_date_short(),
-               date_breaks = "2 week",
-               name = "")+
-  theme_classic()
-```
 
 
 ## BORING LM revisit
@@ -159,13 +133,13 @@ ggplot(data = National_weekly)+
 
 ### X weeks predicting the next week (or this week)
 
-for predicting the fututrre, we are not gfoing to have the present day WW results, and the lag of the WW to cases is not enought o usefully model case loads.
+for predicting the future, we are not going to have the present day WW results, and the lag of the WW to cases is not enough to usefully model case loads.
 An updated model might look like:  
-`r case_sum ~ cases_last_week + copies_last_week + end_of_week_date`
+case_sum ~ cases_last_week + copies_last_week + end_of_week_date
 
 
 
-```{r}
+```{r, 5 weeks}
 National_weekly$mod_test <- NA
 train_length <- 5
 for(i in 1:(length(National_weekly$x) - train_length)){
@@ -198,10 +172,314 @@ ggplot(data = National_weekly)+
                name = "")+
   theme_classic()
 
-National_weekly$y_hatcase_lm - National_weekly$mod_test
-National_weekly$case_sum - National_weekly$mod_test
-
+# RMSE
 mean((National_weekly$case_sum - National_weekly$mod_test)^2, na.rm = T)^0.5
+
 ```
+Extracting the function that describes this orange line for each 5 weeks is the key to understanding inflexion points.  
+As the variance of the 5 week estimation of cases (orange line) around the signal of reported cases (black line) is still quite high, other approaches are worth exploring to estimate the change in reported cases.  
+
+
+
+## GAM
+
+```{r GAM}
+model_wkcase_gam <- gam(data = National_weekly,
+                        log10(case_sum) ~ s(cases_last_week) + s(log10(copies_per_person_day)) + s(log10(copies_last_week)) + s(x, k = 2), 
+                        method = "REML")
+par(mfrow = c(2,2))
+plot(model_wkcase_gam)
+summary(model_wkcase_gam)
+
+National_weekly$y_hatcasegam <- 10^predict(model_wkcase_gam, list(x = National_weekly$x, 
+                                                                  copies_per_person_day = National_weekly$copies_per_person_day,
+                                                                  copies_last_week = National_weekly$copies_last_week,
+                                                                  cases_last_week = National_weekly$cases_last_week,
+                                                                  x = National_weekly$x))
+
+ggplot(data = National_weekly)+
+  geom_line(aes(x = week_end_date, y = y_hatcase_lm), colour = "brown")+
+  geom_line(aes(x = week_end_date, y = y_hatcase_lm1), colour = "green")+
+  geom_line(aes(x = week_end_date, y = y_hatcasegam), colour = "blue", size = 2)+
+  geom_line(aes(x = week_end_date, y = case_sum))+
+  scale_y_log10(labels = scales::label_log())+
+  scale_x_date(labels = scales::label_date_short(),
+               date_breaks = "2 week",
+               name = "")+
+  theme_classic()
+```
+
+<!-- https://fromthebottomoftheheap.net/2021/02/02/random-effects-in-gams/ -->
+
+
+
+## LM polynomial
+
+```{r, LM polynomial 2}
+model_wkcase_lm2 <- MASS::glm.nb(data = National_weekly,
+                                 case_sum ~ 
+                                   x +
+                                   # cases_last_week + 
+                                   I(log10(copies_per_person_day)^4) +
+                                   I(log10(copies_last_week)^3)
+)
+summary(model_wkcase_lm2)
+
+par(mfrow = c(2,3))
+plot(model_wkcase_lm2)
+hist(model_wkcase_lm2$residuals)
+
+National_weekly$y_hat_lm2 <- predict(model_wkcase_lm2, 
+                                     list(x = National_weekly$x, 
+                                          copies_per_person_day = National_weekly$copies_per_person_day,
+                                          copies_last_week = National_weekly$copies_last_week,
+                                          cases_last_week = National_weekly$cases_last_week), 
+                                     type = "response")
+
+
+```
+```{r outlier lm2}
+National_weekly[8,"week_end_date"]
+
+ggplot(data = National_weekly)+
+  geom_line(aes(x = week_end_date, y = case_sum))+
+  geom_point(aes(x = week_end_date, y = case_sum), colour = "blue")+
+  geom_point(aes(x = National_weekly[8,"week_end_date"], y = National_weekly[8, "y_hat_lm2"]), colour = "brown", size = 1.5)+
+  geom_line(aes(x = week_end_date, y = y_hat_lm2), linetype = "dotted")+
+  scale_y_log10(labels = scales::label_log())+
+  scale_x_date(labels = scales::label_date_short(),
+               date_breaks = "2 week",
+               name = "")+
+  # geom_vline(xintercept = National_weekly[10,"week_end_date"])+
+  theme_classic()
+
+```
+
+
+
+```{r, lm2.1 5 weeks}
+National_weekly$mod_test2_1 <- NA
+National_weekly$mod_test_slope2_1 <- NA
+National_weekly$cases_slope <- NA
+National_weekly$ww_prev_slope <- NA
+National_weekly$ww_slope <- NA
+
+train_length <- 5
+for(i in 1:(length(National_weekly$x) - train_length)){
+  
+  # get data for training and testing
+  data_train <- National_weekly %>%
+    filter(x >= i, x < i + train_length)
+  
+  data_test <- National_weekly %>%
+    filter(x == i+train_length)
+  
+  # train model for the following week
+  mod_train <- lm(log10(case_sum) ~ 
+                    x +
+                    # cases_last_week + 
+                    I(log10(copies_per_person_day)^4) +
+                    I(log10(copies_last_week)^3),
+                  data = data_train)
+  
+  # get prediction for following week
+  National_weekly$mod_test2_1[i+train_length] <- 10^predict(mod_train,
+                                                            list(x = data_test$x,
+                                                                 copies_per_person_day = data_test$copies_per_person_day,
+                                                                 cases_last_week = data_test$cases_last_week,
+                                                                 copies_last_week = data_test$copies_last_week), 
+                                                            type = "response")
+}
+
+rm(i)
+
+for(i in 2:(length(National_weekly$x))){
+  National_weekly$mod_test_slope2_1[i] <- (National_weekly$mod_test2_1[i])- (National_weekly$mod_test2_1[i-1])
+  National_weekly$cases_slope[i] <- (National_weekly$case_sum[i])- (National_weekly$case_sum[i-1])
+  National_weekly$ww_prev_slope[i] <-  (National_weekly$copies_last_week[i])- (National_weekly$copies_last_week[i-1])
+  National_weekly$ww_slope[i] <-  (National_weekly$copies_per_person_day[i])- (National_weekly$copies_per_person_day[i-1])
+}
+
+National_weekly<- National_weekly %>% 
+  mutate(mod_slope_direction = case_when(mod_test_slope2_1 > 0 ~ "increase",
+                                         mod_test_slope2_1 < 0 ~ "decrease",
+                                         TRUE ~ "no change"), 
+         cases_slope_direction = case_when(cases_slope > 0 ~ "increase",
+                                           cases_slope < 0 ~ "decrease",
+                                           TRUE ~ "no change"), 
+         ww_prev_slope_direction = case_when(ww_prev_slope > 0 ~ "increase",
+                                             ww_prev_slope < 0 ~ "decrease",
+                                             TRUE ~ "no change"),
+         ww_slope_direction = case_when(ww_slope > 0 ~ "increase",
+                                        ww_slope < 0 ~ "decrease",
+                                        TRUE ~ "no change") )
+
+```
+
+
+```{r}
+National_weekly %>% 
+  filter(x>6) %>%
+  ggplot()+
+  geom_line(aes(x = week_end_date, y = case_sum))+ 
+  geom_point(aes(x = week_end_date, y = case_sum, shape = cases_slope_direction, fill = cases_slope_direction))+
+  geom_line(aes(x = week_end_date, y = copies_last_week), colour = "lightgreen", size = 1.5)+
+  geom_point(aes(x = week_end_date, y = copies_last_week, shape = ww_prev_slope_direction, fill = ww_prev_slope_direction), size = 1.5 )+
+  scale_shape_manual(values = c("increase" = 24,
+                                "decrease" = 25,
+                                "no change" = 21))+
+  scale_fill_manual(values = c("increase" = "red",
+                               "decrease" = "grey",
+                               "no change" = 1))+
+  scale_y_log10(labels = scales::label_log())+
+  scale_x_date(labels = scales::label_date_short(),
+               date_breaks = "2 week",
+               name = "")+
+  theme_classic()+
+  theme(legend.title = element_blank(), 
+        legend.position = c(0.9, 0.9), 
+        panel.grid.major.x = element_line(colour = "grey", size = 0.5), 
+        panel.grid.minor.x = element_line(colour = "grey", size = 0.5))
+```
+
+
+
+ww results from the previous week   
+
+
+
+```{r increases match plots }
+National_weekly %>% 
+  filter(x>6) %>%
+  ggplot()+
+  geom_line(aes(x = week_end_date, y = case_sum))+ 
+  geom_point(aes(x = week_end_date, y = case_sum, shape = cases_slope_direction, fill = cases_slope_direction))+
+  geom_line(aes(x = week_end_date, y = mod_test2_1), colour = "orange", size = 1.5)+
+  geom_point(aes(x = week_end_date, y = mod_test2_1, shape = mod_slope_direction, fill = mod_slope_direction), size = 1.5 )+
+  scale_shape_manual(values = c("increase" = 24,
+                                "decrease" = 25,
+                                "no change" = 21))+
+  scale_fill_manual(values = c("increase" = "red",
+                               "decrease" = "grey",
+                               "no change" = 1))+
+  # geom_line(aes(x = week_end_date, y = mod_test_slope2_1), linetype = "dotted")+
+  scale_y_log10(labels = scales::label_log())+
+  scale_x_date(labels = scales::label_date_short(),
+               date_breaks = "2 week",
+               name = "")+
+  theme_classic()+
+  theme(legend.title = element_blank(), 
+        legend.position = c(0.9, 0.9), 
+        panel.grid.major.x = element_line(colour = "grey", size = 0.5), 
+        panel.grid.minor.x = element_line(colour = "grey", size = 0.5))
+```
+
+
+
+Model predictions    
+
+
+
+```{r increases match tables}
+table(ww_prev_week = National_weekly$ww_prev_slope_direction, cases = National_weekly$cases_slope_direction)
+table(ww_week = National_weekly$ww_slope_direction, cases = National_weekly$cases_slope_direction)
+table(model = National_weekly$mod_slope_direction, cases = National_weekly$cases_slope_direction)
+```
+The ww results from the previous week incorrectly predicted: decreases 8/24 times, increase 6/18 times, and 0/1 times for no change  
+The ww results from the current week incorrectly predicted: decreases 6/24 times, increase 5/18 times, and 0/1 times for no change. However, this will not be useful moving forward  
+
+The model was NOT an improvement on predicting changes in reported cases, overall.  
+The model incorrectly predicted: decreases 8/24 times, increase 6/18 times, and 0/1 times for no change.  
+
+## another approach  
+
+The previous week of wastewater results is either increasing, decreasing or staying the same. The magnitude of this change is not reflected in "increase" or "decrease".  
+The next step is to examine the magnitude of change from one week to the next (for previous weeks' ww results) as a model (or part of a model) for change in reported cases.  
+
+```{r}
+plot(National_weekly$cases_slope ~ National_weekly$ww_prev_slope)
+```
+
+
+
+
+
+There is no apparent relationship here. The next step is to do a grid-search of slope sensitivities to decide if 0 is the best increase and decrease to be running with.  A grid search of increases and decreases: are they the same, are they different?
+
+but first, how does the variance of scaled ww from previous week compare to the variance of the reported cases?  
+
+
+
+```{r plotted cases and ww}
+National_weekly %>% 
+  mutate(plot_ww = 10^(0.8232*log10(National_weekly$copies_last_week ) - 1.0921), 
+         plot_cases = case_sum ) %>% 
+  select(plot_ww, plot_cases,  week_end_date) %>% 
+  pivot_longer(cols = starts_with("plot_"), 
+               names_to = "measure", 
+               values_to = "values") %>% 
+  ggplot(aes(x = week_end_date, y = values, colour = measure))+
+  scale_y_log10()+
+  geom_line()+
+  theme_classic()
+```
+
+
+We have all seen this many times before, but not really taken any time to think about how ww varies in relation to cases.  
+from the linear model I fit specified as:  
+
+
+
+$$
+log_{10}(casesThisWeek) \sim log_{10}(copies Last Week)
+$$
+```{r scaled ww to cases}
+mod_lm_case_ww <- lm(log10(case_sum) ~ log10(copies_last_week), data = National_weekly)
+plot(mod_lm_case_ww, which = 2)
+```
+
+
+
+I re-scaled the WW as copies per person per day for the past week as follows:  
+
+$$
+wwReScale = 10^{(0.8232*log_{10}(copies Last Week)) - 1.0921}
+$$
+
+Then assessed the 
+
+```{r residuals, warning = FALSE}
+National_weekly <- National_weekly %>% 
+  mutate(ww_scaled = (0.8232*log10(National_weekly$copies_last_week)) - 1.0921, 
+         deviation = log10(case_sum) - ww_scaled, 
+         dev_sq = deviation^2
+         ) 
+National_weekly[c(8,9), "week_end_date"]
+
+National_weekly%>% 
+  ggplot(aes(x = week_end_date, y = deviation)) +
+  geom_hline(yintercept = 0, colour = "red")+
+  geom_line()+
+  geom_vline(xintercept = National_weekly[9, "week_end_date"], colour = "grey")+
+  geom_vline(xintercept = National_weekly[8, "week_end_date"], colour = "grey")+
+  scale_x_date(labels = scales::label_date_short(),
+               date_breaks = "2 week",
+               name = "")+
+  theme_classic()
+
+National_weekly%>% 
+  filter(x!= 9, x!= 8) %>%
+  ggplot(aes(sample = deviation)) +
+  stat_qq() + 
+  stat_qq_line(colour = "red") + 
+  theme_classic()
+
+ggplot(National_weekly %>% 
+           filter(x!= 9, x!= 8), aes(deviation)) +
+  geom_histogram()+
+  geom_density() + 
+  theme_classic()
+```
+
 
 
